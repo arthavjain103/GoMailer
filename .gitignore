@@ -1,0 +1,64 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE and Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Go build and dependencies
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/vendor/
+go.work
+
+# Build outputs
+email-sender
+email-sender.exe
+
+# Test coverage
+*.out
+*.test
+coverage.txt
+coverage.html
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+temp/
+.sixth/
+
+# OS specific
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+
+# Local configuration
+config.local.yml
+settings.json
+
+# Sensitive data
+*credentials*
+*secret*
+*password*
+*.pem
+*.key
+
+# CSV backups (if generating reports)
+*.csv.bak
