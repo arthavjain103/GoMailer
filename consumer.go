@@ -1,58 +1,76 @@
 package main
 
-import "fmt"
-import "sync"
-import "time"
-import "net/smtp"
-import "log"
-import "os"
-import "github.com/joho/godotenv"
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	
+	"sync"
+	
+	"github.com/joho/godotenv"
+	redislib "github.com/redis/go-redis/v9"
+)
+
+const (
+	MAX_RETRIES = 3
+)
 
 func init() {
-    godotenv.Load()
+	godotenv.Load()
 }
 
-func emailWorker(id int , ch chan Recipient , wg *sync.WaitGroup) {
+func emailWorker(id int, ch chan Recipient, wg *sync.WaitGroup, client *redislib.Client) {
 	defer wg.Done()
+
 	for recipient := range ch {
-		
-		
-		smtpHost := os.Getenv("smtpHost")
-		smtpPort := os.Getenv("smtpPort")
 
-		from := os.Getenv("from")
-		smtpUser := os.Getenv("SMTP_USER")
-		smtpPass := os.Getenv("SMTP_PASSWORD")
-		
-		if smtpUser == "" || smtpPass == "" {
-			log.Printf("Worker %d: Missing SMTP credentials (set SMTP_USER and SMTP_PASSWORD env vars)\n", id)
-			continue
-		}
-		
-		msg , err:= Template(recipient)
+		err := sendEmail("Main", id, recipient)
+
 		if err != nil {
-			log.Printf("Worker %d: Template error for %s: %v\n" , id , recipient.Email, err)
-			continue
-		}
-		
-		log.Printf("Worker %d: SMTP Host: %s, SMTP User: %s\n", id, smtpHost, smtpUser)
-		
-		// SMTP Authentication
-		auth := smtp.PlainAuth(
-			"",
-			smtpUser,
-			smtpPass,
-			smtpHost,
-		)
-		fmt.Printf("Worker %d : sending email to %s (from: %s)\n" , id , recipient.Email, from)
-		err = smtp.SendMail(smtpHost + ":"+ smtpPort , auth ,  "arthav470@gmail.com" , []string{recipient.Email} , []byte (msg))
+			log.Printf("Worker %d failed for %s: %v\n",
+				id,
+				recipient.Email,
+				err,
+			)
 
-		if err != nil{
-			log.Printf("Worker %d: SMTP ERROR for %s: %v\n", id, recipient.Email, err)
+
+			pushToRetryQueue(client, recipient)
+			 removeFromProcessingQueue(client, recipient)
 			continue
 		}
-		time.Sleep(50 * time.Millisecond)
-		fmt.Printf("Worker %d : sent email to %s \n" , id , recipient.Email)
-		
+
+	    removeFromProcessingQueue(client, recipient)
+
+		fmt.Printf("Worker %d: email sent successfully to %s\n",
+			id,
+			recipient.Email,
+		)
 	}
 }
+// pushToRetryQueue handles retry logic: increment retry count, push to retry queue or DLQ
+func pushToRetryQueue(client *redislib.Client, recipient Recipient) {
+	recipient.Retry++
+	
+
+	// If max retries exceeded, push to Dead Letter Queue
+	if recipient.Retry > MAX_RETRIES {
+		jsonData, _ := json.Marshal(recipient)
+		err := client.RPush(ctx, "email:dlq", string(jsonData)).Err()
+		if err != nil {
+			log.Printf("Error pushing to DLQ: %v\n", err)
+		}
+		log.Printf("Email %s moved to DLQ after %d retries\n", recipient.Email, recipient.Retry-1)
+		return
+	}
+
+	// Push to retry queue
+	jsonData, _ := json.Marshal(recipient)
+	err := client.RPush(ctx, "email:retry", string(jsonData)).Err()
+	if err != nil {
+		log.Printf("Error pushing to retry queue: %v\n", err)
+		return
+	}
+
+	log.Printf("Email %s queued for retry (Attempt %d/%d)\n", recipient.Email, recipient.Retry, MAX_RETRIES)
+}
+
