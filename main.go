@@ -10,7 +10,7 @@ import (
 )
 
 
-
+var emailTemplate *template.Template
 type Recipient struct {
 	Name  string `json:"name"`
 	Email string `json:"email"`
@@ -25,6 +25,12 @@ func main() {
 
 	// Redis init
 	client := InitRedis()
+
+	var err error
+	emailTemplate, err = template.ParseFiles("email.tmpl")
+	if err != nil {
+		panic(err)
+	}
 
 	// PRODUCER (CSV → Redis)
 	
@@ -105,14 +111,13 @@ if err != nil {
 }
 
 func Template(r Recipient) (string, error) {
-	t, err := template.ParseFiles("email.tmpl")
-	if err != nil {
-		return "", err
-	}
+
 	var tpl bytes.Buffer
-	err = t.Execute(&tpl, r)
+
+	err := emailTemplate.Execute(&tpl, r)
 	if err != nil {
 		return "", err
 	}
+
 	return tpl.String(), nil
 }
