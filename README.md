@@ -11,7 +11,7 @@ This is not a simple "loop and send" script. It is a reliable, crash-safe email 
 **What it does:**
 
 - Reads recipient data from a CSV file and enqueues each entry into Redis
-- Checks idempotency before enqueueing to prevent duplicate sends across runs or restarts
+- Checks idempotency at campaign/job level before enqueueing to prevent duplicate sends within a campaign
 - Moves jobs atomically from the queue into a processing tracker using `BLMove`
 - Sends emails concurrently through 5 workers sharing one buffered channel
 - On failure, re-queues the job into `email:retry` with an incremented retry counter
@@ -89,11 +89,18 @@ Capacity 50 is not arbitrary — it balances two concerns. Too small and workers
 
 ---
 
-### 7. Why SetNX for idempotency instead of checking the queue?
+### 7. Why SetNX for idempotency with campaign scoping?
 
-The naive idempotency check would be: before enqueuing, scan `email:queue` to see if this address already exists. That is an `O(n)` operation on a list — it gets slower the more items are in the queue, and it is not atomic. Two producers running in parallel could both check, both find the address absent, and both enqueue it.
+Idempotency must be scoped to a campaign or job, not globally per email. Without scoping, once an email is sent in campaign A, it can never be sent again even for campaign B — but that may be intentional and necessary.
 
-`SetNX` (Set if Not Exists) is a single atomic Redis command that sets a key only if it does not already exist and returns whether it succeeded. It is `O(1)` regardless of queue size. If two producers race on the same address, only one `SetNX` can win — the other gets false and skips. There is no scan, no race condition, no extra round-trips. The key carries a 24-hour TTL so it automatically expires, allowing re-sends in a future campaign without manual cleanup.
+The idempotency key format is: `campaign:{campaignID}:email:{email}`
+
+This is a single atomic Redis command that sets a key only if it does not already exist and returns whether it succeeded. It is `O(1)` regardless of queue size. If two producers race on the same address within the same campaign, only one `SetNX` can win — the other gets false and skips.
+
+The key carries a 24-hour TTL so it automatically expires, allowing re-sends in a future campaign without manual cleanup. By scoping to `{campaignID}`, you ensure that:
+- The same person can receive emails from different campaigns
+- Within a single campaign, duplicates are prevented
+- No manual key cleanup needed between campaigns
 
 ---
 
