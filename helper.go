@@ -87,3 +87,17 @@ func removeFromProcessingQueue(
 		)
 	}
 }
+
+func recoverProcessing(client *redislib.Client) {
+	data, err := client.LRange(ctx, "email:processing", 0, -1).Result()
+	if err != nil {
+	log.Println("recover error:", err)
+	return
+}
+
+	for _, item := range data {
+		client.RPush(ctx, "email:queue", item)
+	}
+
+	client.Del(ctx, "email:processing")
+}

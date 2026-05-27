@@ -29,11 +29,12 @@ func loadRecipient(filePath string , client *redislib.Client ) error {
 	for _, record := range records[1:] {
 
 		recipient := Recipient{
-			Name:  record[0],
-			Email: record[1],
+			Name:       record[0],
+			Email:      record[1],
+			CampaignID: "default-campaign",
 		}
-		//IDEMPOTENCY CHECK
-		key := "email:" + recipient.Email 
+		//IDEMPOTENCY CHECK (Job/Campaign level)
+		key := "campaign:" + recipient.CampaignID + ":email:" + recipient.Email 
 		set, err := client.SetNX(ctx, key, 1, 24*time.Hour).Result()
 		if err != nil {
 			fmt.Println("Redis error:", err)

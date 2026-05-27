@@ -4,16 +4,23 @@ import (
 	"context"
 	"fmt"
 	"log"
-
+ "os"
 	redislib "github.com/redis/go-redis/v9"
 )
 
 var ctx = context.Background()
+func getRedisAddr() string {
+	addr := os.Getenv("REDIS_ADDR")
+	if addr == "" {
+		addr = "localhost:6379"
+	}
+	return addr
+}
 
 func InitRedis() *redislib.Client {
 	// Connect to Redis
 	client := redislib.NewClient(&redislib.Options{
-		Addr:     "localhost:6379", // Replace with your Redis server address
+		Addr:     getRedisAddr(), // Replace with your Redis server address
 		Password: "",                // No password for local development
 		DB:       0,                 // Default DB
 	})

@@ -12,9 +12,10 @@ import (
 
 var emailTemplate *template.Template
 type Recipient struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
-	Retry int   `json:"retry"`
+	Name       string `json:"name"`
+	Email      string `json:"email"`
+	Retry      int   `json:"retry"`
+	CampaignID string `json:"campaign_id"`
 }
 
 func main() {
@@ -25,6 +26,7 @@ func main() {
 
 	// Redis init
 	client := InitRedis()
+	recoverProcessing(client)
 
 	var err error
 	emailTemplate, err = template.ParseFiles("email.tmpl")
