@@ -67,11 +67,14 @@ func main() {
 			ctx,
 			"email:retry",      
 			"email:processing",
-			"Left",
-			"Right",
+			"LEFT",
+			"RIGHT",
 			0,
 		).Result()
-
+if err != nil {
+	fmt.Println("Retry Redis Error:", err)
+	continue
+}
 	
 		var recipient Recipient
 		err = json.Unmarshal([]byte(data), &recipient)
