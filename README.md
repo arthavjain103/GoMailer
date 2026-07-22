@@ -1,6 +1,7 @@
 # GoMailer — Production-Grade Bulk Email System
 
 A high-performance concurrent bulk email delivery system built in Go using goroutines, channels, and a worker pool pattern. The system reads recipients from a CSV file, loads them into a Redis-backed persistent queue, sends emails concurrently through a single shared channel, and handles failures automatically with a retry queue and Dead Letter Queue.
+Web-based dashboard for uploading recipient CSV files, composing custom email templates with file attachments, managing campaigns, monitoring real-time delivery status, viewing worker activity, and tracking campaign analytics. The backend enforces a Token Bucket Rate Limiter to ensure reliable and controlled email delivery.
 
 ---
 
@@ -502,23 +503,5 @@ Worker 1: sent jane@example.com successfully
 
 ## Current Focus Areas
 
-### Frontend Dashboard
-Web-based dashboard for uploading CSV files, monitoring email delivery status, viewing worker activity, and tracking campaign analytics in real time. Users will be able to manage campaigns directly from the browser without command-line interaction.
-
-### Rate Limiter
-Implement SMTP-aware request throttling to respect provider sending limits and avoid account blocking or temporary bans. Planned features include configurable emails-per-minute limits, token bucket rate limiting, and automatic exponential backoff on SMTP failures.
-
 ### Multiple Template Support
 Support multiple email templates based on recipient type, campaign category, or segmentation rules. The CSV file will include a template identifier column, allowing different personalized templates to be sent within the same batch process.
-
-### Delivery Tracking & Metrics
-Add delivery metrics including:
-- Success/failure counts
-- Retry statistics
-- Processing throughput
-- Worker performance
-- Queue length monitoring
-
-### Graceful Shutdown & Recovery
-
-Improve shutdown handling so workers finish active jobs before termination while safely persisting unprocessed jobs back into Redis for recovery on restart.
