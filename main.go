@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"text/template"
-	
 )
+
+func shouldAutoLoadDummyCSV() bool {
+	v := strings.TrimSpace(os.Getenv("AUTO_LOAD_DUMMY_CSV"))
+	return strings.EqualFold(v, "true") || v == "1" || strings.EqualFold(v, "yes")
+}
 
 type Recipient struct {
 	Name       string `json:"name"`
@@ -31,10 +36,9 @@ func main() {
 	// Runs independently of the CSV → Redis → workers pipeline below.
 	go StartServer()
 	bucket := NewTokenBucket(
-    20, // burst capacity
-    2,  // 2 emails/sec
-)
-
+		20, // burst capacity
+		2,  // 2 emails/sec
+	)
 
 	// Load the default template text from disk so behaviour is unchanged
 	// unless the user edits/saves a new template from the dashboard's
@@ -47,19 +51,15 @@ func main() {
 
 	// PRODUCER (CSV → Redis)
 	//
-	// Campaign-aware bootstrap:
-	//   - if Redis already has an "active campaign" (set the last time a
-	//     CSV was uploaded), this is a crash-recovery restart: resume the
-	//     SAME campaign ID and do NOT reload the CSV. recoverProcessing()
-	//     above already requeues any in-flight items, and they carry their
-	//     original campaign ID, so idempotency keys prevent duplicates.
-	//   - if Redis has no active campaign yet (first ever run), bootstrap
-	//     one for the bundled dummy_emails.csv so `go run .` keeps working
-	//     exactly as before.
+	// On a brand-new app start there is no campaign state in Redis yet. By
+	// default we intentionally do not auto-load the bundled sample CSV; the app
+	// should stay idle until the user uploads a new file or explicitly starts a
+	// campaign. If someone wants the legacy startup behavior, they can opt in by
+	// setting AUTO_LOAD_DUMMY_CSV=true.
 	if source, campaignID, ok := getCurrentCampaign(client); ok {
 		setLastUploadedCSV(source)
 		appendActivityLog("info", "", fmt.Sprintf("resumed existing campaign %s after restart", campaignID))
-	} else {
+	} else if shouldAutoLoadDummyCSV() {
 		bootstrapID := newCampaignID()
 		bootstrapSource := "dummy_emails.csv"
 		if err := setCurrentCampaign(client, bootstrapSource, bootstrapID); err != nil {
@@ -73,6 +73,8 @@ func main() {
 				fmt.Println("Producer Error:", err)
 			}
 		}()
+	} else {
+		appendActivityLog("info", "", "no active campaign found; waiting for upload or manual start")
 	}
 
 	// CONSUMER (Redis → Channel)
@@ -131,14 +133,12 @@ func main() {
 
 	for i := 1; i <= workerCount; i++ {
 		wg.Add(1)
-		go emailWorker(i, recipientChannel, &wg, client , bucket)
+		go emailWorker(i, recipientChannel, &wg, client, bucket)
 	}
 
 	wg.Wait()
 	fmt.Println("All email workers completed!")
 
-
-	
 }
 
 func Template(r Recipient) (string, error) {
