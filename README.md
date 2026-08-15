@@ -112,7 +112,7 @@ BUT Retry queue bypasses idempotency layer completely.
 
 ### Flow Diagram
 
-![GoMailer flowchart](flowchart/mermaidview-diagram.png)
+![GoMailer flowchart](flowchart/flow.png)
 
 
 
