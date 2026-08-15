@@ -4,10 +4,12 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
 	redislib "github.com/redis/go-redis/v9"
+	"go_project/internal/postgres"
 )
 
 func loadRecipient(filePath string, client *redislib.Client, campaignID string) error {
@@ -64,6 +66,10 @@ func loadRecipient(filePath string, client *redislib.Client, campaignID string) 
 		if err != nil {
 			fmt.Println("Redis push error:", err)
 			continue
+		}
+
+		if err := postgres.RecordEmailEvent(recipient.CampaignID, recipient.Email, "queued", recipient.Retry); err != nil {
+			log.Printf("postgres queued event error: %v\n", err)
 		}
 
 		fmt.Println("Added to Redis Queue:", recipient.Email)

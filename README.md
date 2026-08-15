@@ -110,82 +110,11 @@ BUT Retry queue bypasses idempotency layer completely.
 
 ## System Architecture
 
-### High-Level Flow
+### Flow Diagram
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        SYSTEM ARCHITECTURE                        │
-└──────────────────────────────────────────────────────────────────┘
+![GoMailer flowchart](flowchart/mermaidview-diagram.png)
 
-┌──────────────┐
-│   CSV File   │
-│ (Recipients) │
-└──────┬───────┘
-       │
-       ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                   PRODUCER  (loadRecipients)                     │
-│                                                                  │
-│  · Read each row from CSV                                        │
-│  · SetNX → email:sent:{email}   (idempotency guard)             │
-│  · Marshal Recipient struct to JSON                              │
-│  · RPush → email:queue          (add to RIGHT side)              │
-└────────────────────────┬────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        REDIS QUEUES                              │
-│                                                                  │
-│  email:queue        Main work queue  [oldest←LEFT | RIGHT→newest]│
-│  email:processing   In-flight safety net (BLMove destination)    │
-│  email:retry        Failed jobs waiting for another attempt      │
-│  email:dlq          Dead Letter Queue — all retries exhausted    │
-└────────────────────────┬────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              CONSUMER  (single goroutine)                        │
-│                                                                  │
-│  Loop:                                                           │
-│    1. Periodically drain email:retry → email:queue  (RPush back) │
-│    2. BLMove email:queue → email:processing         (atomic pop) │
-│    3. Unmarshal JSON → Recipient struct                          │
-│    4. Push Recipient into recipientChannel                       │
-└────────────────────────┬────────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│         recipientChannel  (single buffered channel, cap 50)      │
-│                                                                  │
-│      Handles BOTH new jobs and retry jobs — same channel         │
-└──────┬──────────┬──────────┬──────────┬──────────┬─────────────┘
-       │          │          │          │          │
-       ▼          ▼          ▼          ▼          ▼
-  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐
-  │Worker 1│ │Worker 2│ │Worker 3│ │Worker 4│ │Worker 5│
-  └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘
-       └──────────┴──────────┼──────────┴──────────┘
-                             │
-                             ▼
-                  ┌──────────────────────┐
-                  │   SMTP  (Brevo)       │
-                  │     SendMail()        │
-                  └──────────┬───────────┘
-                             │
-              ┌──────────────┴──────────────┐
-              ▼                             ▼
-          SUCCESS                        FAILURE
-              │                             │
-              ▼                             ▼
-  Remove from email:processing      Retries < 3 ?
-                                         │
-                              ┌──────────┴──────────┐
-                              ▼ YES                  ▼ NO
-                     Retries++               Push to email:dlq
-                     Push to email:retry     Remove from processing
-                     (re-enters consumer     (manual review)
-                      loop on next cycle)
-```
+
 
 ---
 

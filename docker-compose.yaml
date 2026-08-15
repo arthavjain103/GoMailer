@@ -1,12 +1,25 @@
 services:
-
   redis:
     image: redis:7-alpine
     container_name: gomailer-redis
     restart: unless-stopped
+    ports:
+      - "6379:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
+
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gomailer
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: krish09
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
   gomailer:
     build: .
@@ -14,12 +27,15 @@ services:
     restart: unless-stopped
     depends_on:
       - redis
+      - postgres
     env_file:
       - .env
     environment:
       REDIS_ADDR: redis:6379
+      POSTGRES_DSN: postgres://postgres:krish09@postgres:5432/gomailer?sslmode=disable
     ports:
       - "8080:8080"
 
 volumes:
   redis_data:
+  postgres_data:

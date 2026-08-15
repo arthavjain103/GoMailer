@@ -11,19 +11,15 @@ import (
 	"strings"
 	"text/template"
 	"time"
+	"go_project/internal/postgres"
 )
 
-// ---------------------------------------------------------------------------
-// This is the ONLY new integration surface added for the React frontend.
 // It is a thin read/observe/trigger layer on top of the existing pipeline:
 //   - stats endpoints just LLEN the existing Redis lists / read counters
 //   - upload endpoint just saves a file to disk (does not touch Redis)
 //   - start endpoint just calls the existing loadRecipient() function
 //   - stop/start (pause) endpoints just flip the in-memory flag consumer.go
 //     already checks between jobs
-// Nothing here changes queue names, worker count, retry/backoff behaviour,
-// or the rate limiter.
-// ---------------------------------------------------------------------------
 
 const uploadsDir = "uploads"
 
@@ -91,12 +87,20 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(completedStr, "%d", &completed)
 	}
 
+	analytics := map[string]int{}
+	if _, campaignID, _ := getCurrentCampaign(RedisClient); campaignID != "" {
+		if summary, err := postgres.GetCampaignAnalytics(campaignID); err == nil {
+			analytics = summary
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"pending":    pending,
 		"processing": processing,
 		"retry":      retry,
 		"failed":     failed,
 		"completed":  completed,
+		"analytics":  analytics,
 	})
 }
 

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"text/template"
+
+	"go_project/internal/postgres"
 )
 
 func shouldAutoLoadDummyCSV() bool {
@@ -30,8 +32,8 @@ func main() {
 
 	// Redis init
 	client := InitRedis()
+	_ = postgres.InitPostgres()
 	recoverProcessing(client)
-
 	// HTTP API for the React dashboard (status/stats/upload/campaign controls).
 	// Runs independently of the CSV → Redis → workers pipeline below.
 	go StartServer()
