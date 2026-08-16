@@ -317,10 +317,78 @@ go-email-sender/
 
 ### Prerequisites
 
-- Go 1.18 or higher installed on your system
-- Redis running locally or remotely
-- SMTP credentials (from Brevo or similar SMTP provider)
+- Docker Desktop / Docker Engine installed
+- Go 1.18+ if you want to run without Docker
+- SMTP credentials from Brevo or any compatible SMTP provider
 - CSV file with recipient data in format: `Name, Email`
+
+---
+
+## Docker Setup (Recommended)
+
+This project is configured to run with Redis and PostgreSQL through Docker Compose.
+
+### 1) Create environment file
+
+Use the project root `.env` file with values like:
+
+```env
+SMTP_USER=your_smtp_username
+SMTP_PASSWORD=your_smtp_password
+smtpHost=smtp-relay.brevo.com
+smtpPort=587
+SMTP_FROM=you@example.com
+POSTGRES_DSN=postgres://postgres:postgres@localhost:5432/gomailer?sslmode=disable
+```
+
+### 2) Start the services
+
+```bash
+docker compose up -d
+```
+
+This starts:
+
+- Redis on `localhost:6379`
+- PostgreSQL on `localhost:5432`
+- GoMailer app on `http://localhost:8080`
+
+### 3) Check the running containers
+
+```bash
+docker ps
+```
+
+### 4) View app status
+
+```bash
+curl http://localhost:8080/api/status
+```
+
+### 5) Stop services
+
+```bash
+docker compose down
+```
+
+To remove database volume as well:
+
+```bash
+docker compose down -v
+```
+
+---
+
+## Local Go Run (Optional)
+
+If you want to run the Go app without Docker containers:
+
+```bash
+go mod tidy
+go run .
+```
+
+Make sure Redis and PostgreSQL are already running locally.
 
 ---
 
@@ -330,35 +398,27 @@ go-email-sender/
 go mod tidy
 go get github.com/redis/go-redis/v9
 go get github.com/joho/godotenv
+go get github.com/jackc/pgx/v5/stdlib
 ```
 
 This downloads the required dependencies:
 
 - `github.com/redis/go-redis/v9` → Redis queue integration
-- `github.com/joho/godotenv` → loading environment variables
+- `github.com/joho/godotenv` → environment configuration
+- `github.com/jackc/pgx/v5/stdlib` → PostgreSQL driver
 
 ---
 
 ## Configuration
 
-Create a `.env` file in the project root:
+The app reads settings from `.env` and Docker Compose environment variables.
+
+
+
+### Redis details
 
 ```env
 REDIS_ADDR=localhost:6379
-REDIS_PASSWORD=
-
-SMTP_HOST=smtp-relay.brevo.com
-SMTP_PORT=587
-SMTP_USER=your_brevo_email@example.com
-SMTP_PASS=your_brevo_smtp_password
-
-FROM_EMAIL=noreply@yourdomain.com
-FROM_NAME=Your App Name
-
-CSV_PATH=dummy_emails.csv
-WORKER_COUNT=5
-MAX_RETRIES=3
-CHANNEL_BUFFER=50
 ```
 
 ---
@@ -378,15 +438,19 @@ Bob Wilson,bob@example.com
 
 ## Running the Application
 
+With Docker:
+
+```bash
+docker compose up -d
+```
+
+Without Docker:
+
 ```bash
 go run .
 ```
 
-Or explicitly:
-
-```bash
-go run main.go producer.go consumer.go
-```
+Then upload a CSV from the dashboard or use the campaign API and start sending.
 
 ---
 
