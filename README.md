@@ -30,81 +30,13 @@ This is not a simple "loop and send" script. It is a reliable, crash-safe email 
 
 ## Architectural Decisions
 
-### 1. Why Redis-based queues instead of in-memory channels only?
-
-The simplest design would be: read CSV → push into a Go channel → workers send. That works perfectly — until the application crashes halfway through a 10,000-recipient batch. Everything in-memory is gone. On restart you have no idea which emails were sent, which were not, and which were mid-flight. You either re-send everything (duplicates) or give up (data loss).
-
-Redis solves this by being the source of truth for all queue state. Every recipient is serialized to JSON and stored in a Redis list before any worker touches it. If the app crashes, the jobs are still in Redis. On restart, the consumer picks up exactly where it left off. No duplicates, no data loss, no manual recovery needed.
-
-Redis also gives you free monitoring — `LLEN email:queue` tells you instantly how many jobs are pending. An in-memory channel gives you nothing.
-
----
-
-### 2. Why a single channel for both new emails and retries?
-
-An earlier version of this system used two separate channels: `recipientChannel` for new jobs fed by a main consumer, and `retryChannel` for failed jobs fed by a dedicated retry consumer — each with their own worker pool.
-
-The problem: a failed email and a new email need the exact same thing. They both need a worker to pick them up and call `SendMail()`. There is no logical reason to route them differently. Having two channels meant two consumers, two worker pools, two sets of goroutines to coordinate, and two code paths to maintain — all doing identical work.
-
-The simplified design embeds the retry counter (`Retries int`) inside the `Recipient` struct itself. The consumer drains `email:retry` back into `email:queue` periodically, and the job flows through the exact same channel and workers as any fresh job. Workers check the counter to decide whether to retry or DLQ — that's the only difference. One channel, one consumer, one worker pool, one code path.
-
----
-
-### 3. Why BLMove instead of a simple LPOP?
-
-`LPOP` pops a job from the queue and returns it. If the application crashes between the `LPOP` and the point where the job is safely in a worker, that job is gone — it was removed from the queue but never processed.
-
-`BLMove` is a single atomic Redis command that simultaneously pops from the source list and pushes to a destination list. The job is never in an intermediate state where it exists in neither list. If the app crashes mid-send, the job is still sitting in `email:processing` — it did not disappear. On restart, a recovery step can move everything from `email:processing` back to `email:queue` and the jobs are retried safely.
-
-The "BL" prefix means blocking — if the queue is empty, `BLMove` waits for a new item instead of returning immediately. This means the consumer goroutine does not need a polling loop with `time.Sleep`. It simply blocks at the Redis level, consuming zero CPU, and wakes up the instant a new job arrives.
-
----
-
-### 4. Why a separate `email:processing` queue?
-
-When a consumer pops a job and hands it to a worker, there is a window of time where the job is being actively processed. During this window, two things can go wrong: the worker can fail before completing, or the application can crash entirely.
-
-Without `email:processing`, a crashed job simply vanishes — it was popped from `email:queue` and never made it to success or retry. You would not know it existed.
-
-`email:processing` acts as an audit trail for in-flight work. Because `BLMove` atomically moves the job there, the job is always accounted for — either in `email:queue` (waiting), `email:processing` (in-flight), `email:retry` (failed, pending retry), or `email:dlq` (permanently failed). At any point you can run `LLEN email:processing` and know exactly how many sends are happening right now. After a crash, everything in `email:processing` represents work that was interrupted and needs to be re-queued.
-
----
-
-### 5. Why a Dead Letter Queue instead of just logging failures?
-
-After 3 failed attempts, you could simply log the error and move on. The problem is that logs are not queryable, not persistent across restarts, and easy to miss. A developer has to grep through log files to find out which recipients never received their email.
-
-The DLQ is a Redis list. It holds the full `Recipient` JSON including the original email address, name, and the final error state. You can inspect it at any time with `redis-cli LRANGE email:dlq 0 -1`, pipe it to a script for bulk re-processing, or alert on its length. When the root cause is fixed (a bad SMTP credential, a full mailbox, a temporary block), you can push DLQ items directly back into `email:queue` for another attempt — no re-importing CSVs, no manual reconstruction.
-
-The DLQ also acts as a circuit breaker. Without it, a permanently undeliverable address (invalid domain, spam trap) would retry forever. The DLQ gives those jobs a final resting place and stops wasting SMTP quota on them.
-
----
-
-### 6. Why a buffered channel with capacity 50?
-
-The channel buffer sits between the consumer and the workers. Without a buffer (capacity 0), the consumer can only hand off one job at a time — it pushes a job, then blocks until a worker picks it up, then pushes the next. Workers and the consumer are perfectly synchronized, which means any worker that finishes early sits idle waiting for the consumer to do its next `BLMove` round-trip to Redis.
-
-A buffered channel of capacity 50 lets the consumer run ahead of the workers. It can pull up to 50 jobs from Redis and queue them in the channel without waiting. Workers always have a job ready the moment they finish, eliminating idle time between sends.
-
-Capacity 50 is not arbitrary — it balances two concerns. Too small and workers starve; too large and you hold too many jobs in memory, defeating the point of Redis persistence. At 5 workers each averaging under a second per send, a buffer of 50 means the consumer has roughly 10 seconds of work pre-loaded, which is enough headroom to absorb any brief Redis latency spike without stalling the workers.
-
----
-
-### 7. Why SetNX for idempotency with campaign scoping?
-
-Idempotency must be scoped to a campaign or job, not globally per email. Without scoping, once an email is sent in campaign A, it can never be sent again even for campaign B — but that may be intentional and necessary.
-
-The idempotency key format is: `campaign:{campaignID}:email:{email}`
-
-This is a single atomic Redis command that sets a key only if it does not already exist and returns whether it succeeded. It is `O(1)` regardless of queue size. If two producers race on the same address within the same campaign, only one `SetNX` can win — the other gets false and skips.
-
-The key carries a 24-hour TTL so it automatically expires, allowing re-sends in a future campaign without manual cleanup. By scoping to `{campaignID}`, you ensure that:
-
-- The same person can receive emails from different campaigns
-- Within a single campaign, duplicates are prevented
-- No manual key cleanup needed between campaigns
-
-BUT Retry queue bypasses idempotency layer completely.
+- Redis-based queues instead of in-memory channels only
+- A single shared channel for both new emails and retries
+- `BLMove` instead of a simple `LPOP`
+- A separate `email:processing` queue
+- A Dead Letter Queue instead of only logging failures
+- A buffered channel with capacity 50
+- `SetNX` for campaign-scoped idempotency
 
 ---
 
@@ -113,8 +45,6 @@ BUT Retry queue bypasses idempotency layer completely.
 ### Flow Diagram
 
 ![GoMailer flowchart](flowchart/flow.png)
-
-
 
 ---
 
@@ -413,8 +343,6 @@ This downloads the required dependencies:
 
 The app reads settings from `.env` and Docker Compose environment variables.
 
-
-
 ### Redis details
 
 ```env
@@ -498,3 +426,4 @@ Worker 1: sent jane@example.com successfully
 
 ### Multiple Template Support
 Support multiple email templates based on recipient type, campaign category, or segmentation rules. The CSV file will include a template identifier column, allowing different personalized templates to be sent within the same batch process.
+```
